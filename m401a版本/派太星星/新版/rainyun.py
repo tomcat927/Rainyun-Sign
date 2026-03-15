@@ -21,12 +21,40 @@ from selenium.webdriver.chrome.webdriver import WebDriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
-import shutil 
-
+import shutil
+import json
 
 # === 钉钉机器人配置 ===
 DINGTALK_TOKEN = "f7ed30834e11b7b52b06363ca15f8bce1879c8bcea3c89f58eb9124c2fcd7fd8"
 DINGTALK_SECRET = "SEC71d9ff55c0c57b1e71e2c8be08a3b054847080c4a8ebcc3e885ec12c28279abf"
+# 飞书群机器人 webhook
+FEISHU_WEBHOOK = (
+    "https://open.feishu.cn/open-apis/bot/v2/hook/7426746d-58de-4a42-84a3-658b0a93d6da"
+)
+
+
+# 新增飞书发送函数（文本消息）
+def send_feishu_message(webhook_url, content):
+    """
+    发送飞书群机器人文本消息
+    """
+    headers = {"Content-Type": "application/json"}
+    data = {"msg_type": "text", "content": {"text": content}}
+    try:
+        resp = requests.post(
+            webhook_url, headers=headers, data=json.dumps(data), timeout=15
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        # 飞书成功一般 code=0
+        if result.get("code", -1) == 0:
+            print("飞书消息发送成功")
+        else:
+            print(f"飞书消息发送失败: {result}")
+    except requests.exceptions.RequestException as e:
+        print(f"飞书消息发送失败: 网络请求错误 - {e}")
+    except Exception as e:
+        print(f"飞书消息发送失败: {e}")
 
 
 def send_dingtalk_message(msg: str):
@@ -56,7 +84,7 @@ def send_dingtalk_message(msg: str):
 
 def init_selenium() -> WebDriver:
     user_data_dir = "/tmp/chromium-user-data"
-    
+
     # 每次启动前清理用户数据目录（避免残留导致启动失败）
     if os.path.exists(user_data_dir):
         shutil.rmtree(user_data_dir)
@@ -70,14 +98,14 @@ def init_selenium() -> WebDriver:
         ops.add_argument("--headless=new")
     ops.add_argument("--disable-gpu")
     # ops.add_argument("--disable-dev-shm-usage")
-    ops.add_argument("--disable-dev-shm-usage") # 避免内存不足
+    ops.add_argument("--disable-dev-shm-usage")  # 避免内存不足
     ops.add_argument("--window-size=1920,1080")
     ops.add_argument("--single-process")  # 有时需要
     ops.add_argument("--disable-setuid-sandbox")
     # === 关键修复 DevToolsActivePort / chrome not reachable ===
     ops.add_argument(f"--user-data-dir={user_data_dir}")
     ops.add_argument("--remote-debugging-port=0")  # ← 自动分配空闲端口（避免9222被占）
-    
+
     # === 可选优化 ===
     ops.add_argument("--window-size=1920,1080")
     ops.add_argument("--disable-extensions")
@@ -349,9 +377,11 @@ if __name__ == "__main__":
         login_button.click()
     except TimeoutException:
         logger.error("页面加载超时，请尝试延长超时时间或切换到国内网络环境！")
-        send_dingtalk_message(
+        msg = (
             f"【雨云签到失败】\n账号: {user}\n页面加载超时，请检查网络或延长超时时间。"
         )
+        send_dingtalk_message(msg)
+        send_feishu_message(FEISHU_WEBHOOK, msg)
         exit()
     try:
         login_captcha = wait.until(
@@ -389,15 +419,17 @@ if __name__ == "__main__":
             f"当前剩余积分: {current_points} | 约为 {current_points / 2000:.2f} 元"
         )
         logger.info("任务执行成功！")
-        send_dingtalk_message(
-            f"【雨云签到成功】\n账号: {user}\n当前积分: {current_points} 分\n约合 ¥{current_points / 2000:.2f}"
-        )
+        msg = f"【雨云签到成功】\n账号: {user}\n当前积分: {current_points} 分\n约合 ¥{current_points / 2000:.2f}"
+        send_dingtalk_message(msg)
+        send_feishu_message(FEISHU_WEBHOOK, msg)
     else:
         logger.error("登录失败！")
-        send_dingtalk_message(f"【雨云签到失败】\n账号: {user}\n登录失败，请检查账号或密码是否正确。")
+        msg = f"【雨云签到失败】\n账号: {user}\n登录失败，请检查账号或密码是否正确。"
+        send_dingtalk_message(msg)
+        send_feishu_message(FEISHU_WEBHOOK, msg)
     # 在脚本结束前确保 driver 退出
     try:
-        if 'driver' in locals() and driver:
+        if "driver" in locals() and driver:
             driver.quit()  # 关键！会终止所有子进程
     except Exception as e:
         print(f"关闭浏览器时出错: {e}")
