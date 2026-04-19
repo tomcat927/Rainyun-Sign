@@ -127,22 +127,59 @@ def cleanup_driver():
 
 
 def init_selenium() -> WebDriver:
+    user_data_dir = "/tmp/chromium-user-data"
+
+    # 每次启动前清理用户数据目录（避免残留导致启动失败）
+    if os.path.exists(user_data_dir):
+        try:
+            shutil.rmtree(user_data_dir)
+        except Exception as e:
+            if logger:
+                logger.warning(f"清理用户数据目录失败: {e}")
+    os.makedirs(user_data_dir, exist_ok=True)
+
     ops = Options()
     ops.add_argument("--no-sandbox")
 
-    if debug:
+    # 仅在本地非 Linux 调试时允许浏览器分离，避免服务器残留进程
+    if debug and not linux:
         ops.add_experimental_option("detach", True)
 
     if linux:
         ops.add_argument("--headless")
-        ops.add_argument("--disable-gpu")
-        ops.add_argument("--disable-dev-shm-usage")
-        ops.add_argument("--window-size=1920,1080")
-        ops.binary_location = "/usr/local/bin/chrome-headless-shell"
-        service1 = Service("/usr/local/bin/chromedriver")
-        return webdriver.Chrome(service=service1, options=ops)
+        # ops.add_argument("--headless=new")
+    ops.add_argument("--disable-gpu")
+    # ops.add_argument("--disable-dev-shm-usage")
+    ops.add_argument("--disable-dev-shm-usage")  # 避免内存不足
+    ops.add_argument("--window-size=1920,1080")
+    # 这个参数在很多 Linux 环境里反而容易导致 Chrome 崩溃或异常，建议删掉。
+    # ops.add_argument("--single-process")  # 有时需要
+    ops.add_argument("--disable-setuid-sandbox")
+    # === 关键修复 DevToolsActivePort / chrome not reachable ===
+    ops.add_argument(f"--user-data-dir={user_data_dir}")
+    ops.add_argument("--remote-debugging-port=0")  # ← 自动分配空闲端口（避免9222被占）
 
-    return webdriver.Chrome(service=Service("chromedriver.exe"), options=ops)
+    # === 可选优化 ===
+    ops.add_argument("--window-size=1920,1080")
+    ops.add_argument("--disable-extensions")
+    ops.add_argument("--disable-plugins")
+    ops.add_argument("--disable-images")  # 加速加载
+    # # 关键修复：指定用户数据目录和调试端口（避免 DevToolsActivePort 错误）
+    # ops.add_argument("--user-data-dir=/tmp/chromium-user-data")
+    # ops.add_argument("--remote-debugging-port=9222")
+    # ops.add_argument("--disable-plugins")
+    # ops.add_argument("--disable-images")                 # 加速加载（可选）
+    # 防止旧实例干扰
+    ops.add_argument("--disable-background-timer-throttling")
+    ops.add_argument("--disable-renderer-backgrounding")
+
+    # 使用系统安装的 Chromium（APT 安装的）
+    ops.binary_location = "/usr/local/bin/chrome-headless-shell"  # ← 修改这里
+
+    # 使用系统安装的 chromedriver（APT 安装的）
+    service1 = Service("/usr/local/bin/chromedriver")  # ← 修改这里
+
+    return webdriver.Chrome(service=service1, options=ops)
 
 
 def download_image(url, filename):
